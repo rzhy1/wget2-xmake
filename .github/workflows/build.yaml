@@ -1,0 +1,56 @@
+name: "Build and Release"
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "*"
+  pull_request:
+    branches:
+      - "*"
+  release:
+    types:
+      - released
+  schedule:
+    - cron: "0 0 * * *"
+
+jobs:
+  build_wget2:
+    runs-on: ubuntu-24.04
+    container: ubuntu:devel
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install prerequisites
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
+          apt-get install -y --no-install-recommends  \
+            mingw-w64 \
+            xmake \
+            gettext \
+            git curl ca-certificates gnupg wget build-essential \
+            flex texinfo jq retry bc
+      - name: Compile with xmake
+        env:
+          CROSS_HOST: "x86_64-w64-mingw32"
+        run: |
+          xmake f -p mingw --toolchain=${CROSS_HOST}
+          xmake -v
+      - name: Archive wget2.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: wget2.exe
+          path: "build/mingw/x86_64/release/wget2.exe" # xmake 的默认输出路径
+      - name: Get version number
+        run: |
+          VERSION=$(wget -qO- https://raw.githubusercontent.com/rockdaboot/wget2/master/NEWS | grep -oP '\bRelease v\K[\d.]+' | head -n 1)
+          echo "wget2_VERSION=${VERSION}" >> $GITHUB_ENV
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: wget2-v${{ env.wget2_VERSION }}
+          allowUpdates: true
+          artifacts: "wget2.exe"
+          bodyFile: "README.md"
+          token: ${{ secrets.GITHUB_TOKEN }}
