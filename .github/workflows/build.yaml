@@ -36,7 +36,7 @@ jobs:
           CROSS_HOST: "x86_64-w64-mingw32"
         run: |
           export XMAKE_ROOT=y
-          xmake f -p mingw --toolchain=${CROSS_HOST}
+          xmake f -p mingw --toolchain=/usr/bin/${CROSS_HOST}
           xmake -v
       - name: Archive wget2.exe
         uses: actions/upload-artifact@v4
