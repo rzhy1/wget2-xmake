@@ -1,7 +1,100 @@
--- xmake.lua
-add_requires("cmake >= 3.16.0", "meson >= 1.2.0")
+includes("@builtin/check")
+add_rules("mode.debug", "mode.release")
 
--- 设置环境变量
+-- 这里我们不需要aria2的依赖，但保留一些常用的
+add_requires(
+    "zlib"  -- 你可以根据你的需求添加其他依赖
+)
+set_policy("package.install_only", true)
+
+set_languages("c++14")
+set_encodings("utf-8")
+set_rundir(".")
+add_defines("CXX11_OVERRIDE=override")
+set_configdir("$(buildir)/config")
+add_includedirs("$(buildir)/config")
+if is_plat("windows") then
+    add_cxxflags("/EHsc")
+end
+
+-- 这里只保留wget2可能需要的头文件
+local common_headers = {
+    "argz.h",
+    "arpa/inet.h",
+    "fcntl.h",
+    "float.h",
+    "inttypes.h",
+    "langinfo.h",
+    "libintl.h",
+    "limits.h",
+    "libgen.h",
+    "locale.h",
+    "malloc.h",
+    "math.h",
+    "memory.h",
+    "netdb.h",
+    "netinet/in.h",
+    "netinet/tcp.h",
+    "poll.h",
+    "signal.h",
+    "stddef.h",
+    "stdint.h",
+    "stdio.h",
+    "stdlib.h",
+    "string.h",
+    "strings.h",
+    "sys/epoll.h",
+    "sys/ioctl.h",
+    "sys/mman.h",
+    "sys/param.h",
+    "sys/stat.h",
+    "sys/socket.h",
+    "sys/time.h",
+    "sys/types.h",
+    "unistd.h",
+     "ifaddrs.h",
+    "pwd.h",
+     "pthread.h",
+     "getopt.h",
+
+     "windows.h",
+     "winsock2.h",
+     "ws2tcpip.h",
+    {"iphlpapi.h", {"winsock2.h", "windows.h", "ws2tcpip.h", "iphlpapi.h"}},
+
+}
+
+
+for _, common_header in ipairs(common_headers) do
+    local k = common_header
+    local v = common_header
+    if type(common_header) == 'table' then
+        k = common_header[1]
+        v = common_header[2]
+    end
+    local name = 'HAVE_'..k:gsub("/", "_"):gsub("%.", "_"):gsub("-", "_"):upper()
+    configvar_check_cincludes(name, v)
+end
+
+
+if is_plat("windows", "mingw") then
+    add_defines("_POSIX_C_SOURCE=1")
+else
+    add_defines("_GNU_SOURCE=1")
+    set_configvar("ENABLE_PTHREAD", 1)
+end
+
+-- wget2 specific
+local PROJECT_NAME = "wget2"
+local PROJECT_VERSION = "2.0.0" -- 根据实际情况修改
+set_configvar("PACKAGE", PROJECT_NAME)
+set_configvar("PACKAGE_NAME", PROJECT_NAME)
+set_configvar("PACKAGE_STRING", PROJECT_NAME .. " " .. PROJECT_VERSION)
+set_configvar("PACKAGE_TARNAME", PROJECT_NAME)
+set_configvar("PACKAGE_VERSION", PROJECT_VERSION)
+set_configvar("VERSION", PROJECT_VERSION)
+
+
 local prefix = "x86_64-w64-mingw32"
 local installdir = path.join(os.getenv("HOME"), "usr", "local", prefix)
 local pkg_config_path = path.join(installdir, "lib", "pkgconfig") .. ":" .. path.join("/usr", prefix, "lib", "pkgconfig")
@@ -12,371 +105,283 @@ local ldflags = "-L" .. path.join(installdir, "lib")
 local cflags = "-O2 -g"
 local winepath = path.join(installdir, "bin") .. ";" .. path.join(installdir, "lib") .. ";" .. path.join("/usr", prefix, "bin") .. ";" .. path.join("/usr", prefix, "lib")
 
-xmake.os.mkdir(installdir)  -- 这里使用 xmake.os.mkdir
-xmake.os.cd(installdir)   -- 这里使用 xmake.os.cd
 
-function get_duration_str(start_time)
+-- Helper function to get duration string
+local function get_duration_str(start_time)
     local end_time = os.time() + os.difftime()
     local duration = string.format("%.1f", end_time - start_time)
     return duration
 end
 
-function build_xz()
-  print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build xz⭐⭐⭐⭐⭐⭐")
-  local start_time = os.time() + os.difftime()
-  os.execv({"sudo", "apt-get", "purge", "xz-utils"})
-  os.execv({"git", "clone", "-j" .. tostring(os.nproc()), "https://github.com/tukaani-project/xz.git"})
-  xmake.os.cd("xz")
-  xmake.os.mkdir("build")
-  xmake.os.cd("build")
-    os.execv({"sudo", "cmake", "..", "-DCMAKE_INSTALL_PREFIX=/usr/local", "-DCMAKE_BUILD_TYPE=Release", "-DXZ_NLS=ON", "-DBUILD_SHARED_LIBS=OFF"})
-    os.execv({"sudo", "cmake", "--build", ".", "--", "-j" .. tostring(os.nproc())})
-    os.execv({"sudo", "cmake", "--install", "."})
-    os.execv({"xz", "--version"})
-  xmake.os.cd("../..")
-  xmake.os.rmdir("xz")
-  local duration = get_duration_str(start_time)
-  io.writefile(path.join(installdir, "xz_duration.txt"), duration)
-end
 
-function build_zstd()
-  print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build zstd⭐⭐⭐⭐⭐⭐")
-  local start_time = os.time() + os.difftime()
-  -- 创建 Python 虚拟环境并安装meson
-  os.execv({"python3", "-m", "venv", "/tmp/venv"})
-  os.execv({"source", "/tmp/venv/bin/activate"})
-  os.execv({"pip3", "install", "meson", "pytest"})
+target("wget2")
+    set_kind("$(kind)")
 
-  -- 编译 zstd
-  os.execv({"git", "clone", "-j" .. tostring(os.nproc()), "https://github.com/facebook/zstd.git"})
-  xmake.os.cd("zstd")
-  os.setenv("LDFLAGS", "-static")
-  os.execv({"meson", "setup",
-        "--cross-file=" .. path.join(os.getenv("GITHUB_WORKSPACE"), "cross_file.txt"),
-        "--backend=ninja",
-        "--prefix=" .. installdir,
-        "--libdir=" .. path.join(installdir, "lib"),
-        "--bindir=" .. path.join(installdir, "bin"),
-        "--pkg-config-path=" .. path.join(installdir, "lib", "pkgconfig"),
-        "-Dbin_programs=true",
-        "-Dstatic_runtime=true",
-        "-Ddefault_library=static",
-        "-Db_lto=true", "--optimization=2",
-        "build/meson", "builddir-st"})
+    -- 添加编译依赖的逻辑
+    on_load(function(target)
+        -- 设置环境变量
+        os.setenv("PKG_CONFIG_PATH", pkg_config_path)
+        os.setenv("PKG_CONFIG_LIBDIR", pkg_config_libdir)
+        os.setenv("PKG_CONFIG", pkg_config)
+        os.setenv("CPPFLAGS", cppflags)
+        os.setenv("LDFLAGS", ldflags)
+        os.setenv("CFLAGS", cflags)
+        os.setenv("WINEPATH", winepath)
 
-  os.execv({"sudo", "rm", "-f", "/usr/local/bin/zstd*"})
-    os.execv({"sudo", "rm", "-f", "/usr/local/bin/*zstd"})
-    os.execv({"meson", "compile", "-C", "builddir-st"})
-    os.execv({"meson", "install", "-C", "builddir-st"})
-    os.execv({"zstd", "--version"})
-  xmake.os.cd("..")
-    xmake.os.rmdir("zstd")
+         if not os.isdir(installdir) then
+             xmake.os.mkdir(installdir)  -- 这里使用 xmake.os.mkdir
+             xmake.os.cd(installdir)   -- 这里使用 xmake.os.cd
 
-  local duration = get_duration_str(start_time)
-  io.writefile(path.join(installdir, "zstd_duration.txt"), duration)
-end
+            local start_time = os.time() + os.difftime()
+            
+            -- 安装 zlib-ng
+           print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build zlib-ng⭐⭐⭐⭐⭐⭐")
+              start_time = os.time() + os.difftime()
+              os.execv({"git", "clone", "-j" .. tostring(os.nproc()), "https://github.com/zlib-ng/zlib-ng"})
+             xmake.os.cd("zlib-ng")
+              os.setenv("CROSS_PREFIX", "x86_64-w64-mingw32-")
+              os.setenv("ARCH", "x86_64")
+             os.setenv("CFLAGS", "-O2")
+              os.setenv("CC", "x86_64-w64-mingw32-gcc")
+            os.execv({"./configure", "--prefix=" .. installdir, "--static", "--64", "--zlib-compat"})
+              os.execv({"make", "-j" .. tostring(os.nproc())})
+             os.execv({"make", "install"})
+              xmake.os.cd("..")
+              xmake.os.rmdir("zlib-ng")
+               local duration = get_duration_str(start_time)
+               io.writefile(path.join(installdir, "zlib-ng_duration.txt"), duration)
+        
+         -- 安装 libiconv
+         print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build libiconv⭐⭐⭐⭐⭐⭐")
+           start_time = os.time() + os.difftime()
+         os.execv({"wget", "-O-", "https://ftp.gnu.org/gnu/libiconv/libiconv-1.18.tar.gz", "|", "tar", "xz"})
+            local libiconv_dir = "libiconv-" .. string.match("libiconv-1.18.tar.gz", "libiconv%-(%d+%.%d+)")
+           xmake.os.cd(libiconv_dir)
+          os.execv({"./configure", "--build=x86_64-pc-linux-gnu", "--host=" .. prefix, "--disable-shared", "--enable-static", "--prefix=" .. installdir})
+           os.execv({"make", "-j" .. tostring(os.nproc())})
+           os.execv({"make", "install"})
+         xmake.os.cd("..")
+         xmake.os.rmdir(libiconv_dir)
+           duration = get_duration_str(start_time)
+          io.writefile(path.join(installdir, "libiconv_duration.txt"), duration)
+        
+         -- 安装 libunistring
+         print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build libunistring⭐⭐⭐⭐⭐⭐")
+           start_time = os.time() + os.difftime()
+         os.execv({"wget", "-O-", "https://ftp.gnu.org/gnu/libunistring/libunistring-1.3.tar.gz", "|", "tar", "xz"})
+            local libunistring_dir = "libunistring-" .. string.match("libunistring-1.3.tar.gz", "libunistring%-(%d+%.%d+)")
+           xmake.os.cd(libunistring_dir)
+         os.execv({"./configure", "CFLAGS=-O2", "--build=x86_64-pc-linux-gnu", "--host=" .. prefix, "--prefix=" .. installdir, "--disable-shared", "--enable-static"})
+          os.execv({"make", "-j" .. tostring(os.nproc())})
+          os.execv({"make", "install"})
+            xmake.os.cd("..")
+            xmake.os.rmdir(libunistring_dir)
+            duration = get_duration_str(start_time)
+           io.writefile(path.join(installdir, "libunistring_duration.txt"), duration)
+          
+         -- 安装 libidn2
+         print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build libidn2⭐⭐⭐⭐⭐⭐")
+           start_time = os.time() + os.difftime()
+         os.execv({"wget", "-O-", "https://ftp.gnu.org/gnu/libidn/libidn2-2.3.7.tar.gz", "|", "tar", "xz"})
+         local libidn2_dir = "libidn2-" .. string.match("libidn2-2.3.7.tar.gz", "libidn2%-(%d+%.%d+%.%d+)")
+         xmake.os.cd(libidn2_dir)
+           os.execv({"./configure", "--build=x86_64-pc-linux-gnu", "--host=" .. prefix, "--disable-shared", "--enable-static", "--with-included-unistring", "--disable-doc", "--disable-gcc-warnings", "--prefix=" .. installdir})
+           os.execv({"make", "-j" .. tostring(os.nproc())})
+           os.execv({"make", "install"})
+            xmake.os.cd("..")
+           xmake.os.rmdir(libidn2_dir)
+          duration = get_duration_str(start_time)
+           io.writefile(path.join(installdir, "libidn2_duration.txt"), duration)
+          
+        -- 安装 libtasn1
+           print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build libtasn1⭐⭐⭐⭐⭐⭐")
+           start_time = os.time() + os.difftime()
+          os.execv({"wget", "-O-", "https://ftp.gnu.org/gnu/libtasn1/libtasn1-4.19.0.tar.gz", "|", "tar", "xz"})
+            local libtasn1_dir = "libtasn1-" .. string.match("libtasn1-4.19.0.tar.gz", "libtasn1%-(%d+%.%d+%.%d+)")
+         xmake.os.cd(libtasn1_dir)
+            os.execv({"./configure", "--host=" .. prefix, "--disable-shared", "--disable-doc", "--prefix=" .. installdir})
+          os.execv({"make", "-j" .. tostring(os.nproc())})
+          os.execv({"make", "install"})
+           xmake.os.cd("..")
+           xmake.os.rmdir(libtasn1_dir)
+            duration = get_duration_str(start_time)
+           io.writefile(path.join(installdir, "libtasn1_duration.txt"), duration)
+           
+         -- 安装 PCRE2
+         print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build PCRE2⭐⭐⭐⭐⭐⭐")
+           start_time = os.time() + os.difftime()
+          os.execv({"git", "clone", "-j" .. tostring(os.nproc()), "https://github.com/PCRE2Project/pcre2"})
+          xmake.os.cd("pcre2")
+            os.execv({"./autogen.sh"})
+           os.execv({"./configure", "--host=" .. prefix, "--prefix=" .. installdir, "--disable-shared", "--enable-static"})
+           os.execv({"make", "-j" .. tostring(os.nproc())})
+           os.execv({"make", "install"})
+          xmake.os.cd("..")
+            xmake.os.rmdir("pcre2")
+           duration = get_duration_str(start_time)
+         io.writefile(path.join(installdir, "pcre2_duration.txt"), duration)
 
-function build_zlib_ng()
-  print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build zlib-ng⭐⭐⭐⭐⭐⭐")
-  local start_time = os.time() + os.difftime()
-  os.execv({"git", "clone", "-j" .. tostring(os.nproc()), "https://github.com/zlib-ng/zlib-ng"})
-    xmake.os.cd("zlib-ng")
-    os.setenv("CROSS_PREFIX", "x86_64-w64-mingw32-")
-    os.setenv("ARCH", "x86_64")
-    os.setenv("CFLAGS", "-O2")
-    os.setenv("CC", "x86_64-w64-mingw32-gcc")
-    os.execv({"./configure", "--prefix=" .. installdir, "--static", "--64", "--zlib-compat"})
-    os.execv({"make", "-j" .. tostring(os.nproc())})
-    os.execv({"make", "install"})
-    xmake.os.cd("..")
-    xmake.os.rmdir("zlib-ng")
-  local duration = get_duration_str(start_time)
-  io.writefile(path.join(installdir, "zlib-ng_duration.txt"), duration)
-end
+          -- 安装 nghttp2
+          print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build nghttp2⭐⭐⭐⭐⭐⭐")
+            start_time = os.time() + os.difftime()
+         os.execv({"wget", "-O-", "https://github.com/nghttp2/nghttp2/releases/download/v1.64.0/nghttp2-1.64.0.tar.gz", "|", "tar", "xz"})
+         local nghttp2_dir = "nghttp2-" .. string.match("nghttp2-1.64.0.tar.gz", "nghttp2%-(%d+%.%d+%.%d+)")
+         xmake.os.cd(nghttp2_dir)
+            os.execv({"./configure", "--build=x86_64-pc-linux-gnu", "--host=" .. prefix, "--prefix=" .. installdir, "--disable-shared", "--enable-static", "--disable-python-bindings", "--disable-examples", "--disable-app", "--disable-failmalloc", "--disable-hpack-tools"})
+           os.execv({"make", "-j" .. tostring(os.nproc())})
+            os.execv({"make", "install"})
+            xmake.os.cd("..")
+            xmake.os.rmdir(nghttp2_dir)
+          duration = get_duration_str(start_time)
+           io.writefile(path.join(installdir, "nghttp2_duration.txt"), duration)
 
-function build_gmp()
-  print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build gmp⭐⭐⭐⭐⭐⭐")
-  local start_time = os.time() + os.difftime()
-  os.execv({"wget", "-nv", "-O-", "https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz", "|", "tar", "x", "--xz"})
-  local gmp_dir = "gmp-" .. string.match("gmp-6.3.0.tar.xz", "gmp%-(%d+%.%d+%.%d+)")
-  xmake.os.cd(gmp_dir)
-    os.execv({"./configure", "--host=" .. prefix, "--disable-shared", "--prefix=" .. installdir})
-    os.execv({"make", "-j" .. tostring(os.nproc())})
-    os.execv({"make", "install"})
-   xmake.os.cd("..")
-    xmake.os.rmdir(gmp_dir)
-  local duration = get_duration_str(start_time)
-  io.writefile(path.join(installdir, "gmp_duration.txt"), duration)
-end
+         -- 安装 gmp
+          print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build gmp⭐⭐⭐⭐⭐⭐")
+           start_time = os.time() + os.difftime()
+          os.execv({"wget", "-nv", "-O-", "https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz", "|", "tar", "x", "--xz"})
+         local gmp_dir = "gmp-" .. string.match("gmp-6.3.0.tar.xz", "gmp%-(%d+%.%d+%.%d+)")
+            xmake.os.cd(gmp_dir)
+         os.execv({"./configure", "--host=" .. prefix, "--disable-shared", "--prefix=" .. installdir})
+           os.execv({"make", "-j" .. tostring(os.nproc())})
+           os.execv({"make", "install"})
+          xmake.os.cd("..")
+         xmake.os.rmdir(gmp_dir)
+         duration = get_duration_str(start_time)
+           io.writefile(path.join(installdir, "gmp_duration.txt"), duration)
 
-function build_gnulibmirror()
-  print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build gnulib-mirror⭐⭐⭐⭐⭐⭐")
-    local start_time = os.time() + os.difftime()
-  os.execv({"git", "clone", "--recursive", "-j" .. tostring(os.nproc()), "https://gitlab.com/gnuwget/gnulib-mirror.git", "gnulib"})
-  os.setenv("GNULIB_REFDIR", path.join(installdir, "gnulib"))
-  local duration = get_duration_str(start_time)
-    io.writefile(path.join(installdir, "gnulibmirror_duration.txt"), duration)
-end
+        -- 安装 libpsl
+           print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build libpsl⭐⭐⭐⭐⭐⭐")
+             start_time = os.time() + os.difftime()
+           os.execv({"git", "clone", "-j" .. tostring(os.nproc()), "--recursive", "https://github.com/rockdaboot/libpsl.git"})
+            xmake.os.cd("libpsl")
+            os.execv({"./autogen.sh"})
+            os.execv({"./configure", "--build=x86_64-pc-linux-gnu", "--host=" .. prefix, "--disable-shared", "--enable-static", "--enable-runtime=libidn2", "--enable-builtin", "--with-included-unistring", "--prefix=" .. installdir})
+             os.execv({"make", "-j" .. tostring(os.nproc())})
+            os.execv({"make", "install"})
+           xmake.os.cd("..")
+           xmake.os.rmdir("libpsl")
+           duration = get_duration_str(start_time)
+           io.writefile(path.join(installdir, "libpsl_duration.txt"), duration)
 
-function build_libiconv()
-  print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build libiconv⭐⭐⭐⭐⭐⭐")
-  local start_time = os.time() + os.difftime()
-  os.execv({"wget", "-O-", "https://ftp.gnu.org/gnu/libiconv/libiconv-1.18.tar.gz", "|", "tar", "xz"})
-   local libiconv_dir = "libiconv-" .. string.match("libiconv-1.18.tar.gz", "libiconv%-(%d+%.%d+)")
-  xmake.os.cd(libiconv_dir)
-    os.execv({"./configure", "--build=x86_64-pc-linux-gnu", "--host=" .. prefix, "--disable-shared", "--enable-static", "--prefix=" .. installdir})
-    os.execv({"make", "-j" .. tostring(os.nproc())})
-    os.execv({"make", "install"})
-   xmake.os.cd("..")
-    xmake.os.rmdir(libiconv_dir)
-  local duration = get_duration_str(start_time)
-    io.writefile(path.join(installdir, "libiconv_duration.txt"), duration)
-end
+           -- 安装 nettle
+            print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build nettle⭐⭐⭐⭐⭐⭐")
+             start_time = os.time() + os.difftime()
+             os.execv({"git", "clone", "-j" .. tostring(os.nproc()), "https://github.com/sailfishos-mirror/nettle.git"})
+             xmake.os.cd("nettle")
+              os.execv({"bash", ".bootstrap"})
+            os.execv({"./configure", "--build=x86_64-pc-linux-gnu", "--host=" .. prefix, "--enable-mini-gmp", "--disable-shared", "--enable-static", "--disable-documentation", "--prefix=" .. installdir})
+              os.execv({"make", "-j" .. tostring(os.nproc())})
+             os.execv({"make", "install"})
+            xmake.os.cd("..")
+           xmake.os.rmdir("nettle")
+              duration = get_duration_str(start_time)
+            io.writefile(path.join(installdir, "nettle_duration.txt"), duration)
 
-function build_libunistring()
-    print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build libunistring⭐⭐⭐⭐⭐⭐")
-    local start_time = os.time() + os.difftime()
-    os.execv({"wget", "-O-", "https://ftp.gnu.org/gnu/libunistring/libunistring-1.3.tar.gz", "|", "tar", "xz"})
-     local libunistring_dir = "libunistring-" .. string.match("libunistring-1.3.tar.gz", "libunistring%-(%d+%.%d+)")
-   xmake.os.cd(libunistring_dir)
-    os.execv({"./configure", "CFLAGS=-O2", "--build=x86_64-pc-linux-gnu", "--host=" .. prefix, "--prefix=" .. installdir, "--disable-shared", "--enable-static"})
-    os.execv({"make", "-j" .. tostring(os.nproc())})
-    os.execv({"make", "install"})
-    xmake.os.cd("..")
-    xmake.os.rmdir(libunistring_dir)
-  local duration = get_duration_str(start_time)
-    io.writefile(path.join(installdir, "libunistring_duration.txt"), duration)
-end
+             -- 安装 gnutls
+             print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build gnutls⭐⭐⭐⭐⭐⭐")
+             start_time = os.time() + os.difftime()
+            os.execv({"wget", "-O-", "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/gnutls-3.8.8.tar.xz", "|", "tar", "x", "--xz"})
+            local gnutls_dir = "gnutls-" .. string.match("gnutls-3.8.8.tar.xz", "gnutls%-(%d+%.%d+%.%d+)")
+            xmake.os.cd(gnutls_dir)
+           os.setenv("GMP_LIBS", "-L" .. path.join(installdir, "lib") .. " -lgmp")
+            os.setenv("NETTLE_LIBS", "-L" .. path.join(installdir, "lib") .. " -lnettle -lgmp")
+            os.setenv("HOGWEED_LIBS", "-L" .. path.join(installdir, "lib") .. " -lhogweed -lnettle -lgmp")
+             os.setenv("LIBTASN1_LIBS", "-L" .. path.join(installdir, "lib") .. " -ltasn1")
+             os.setenv("LIBIDN2_LIBS", "-L" .. path.join(installdir, "lib") .. " -lidn2")
+            os.setenv("GMP_CFLAGS", cflags)
+           os.setenv("LIBTASN1_CFLAGS", cflags)
+             os.setenv("NETTLE_CFLAGS", cflags)
+            os.setenv("HOGWEED_CFLAGS", cflags)
+           os.setenv("LIBIDN2_CFLAGS", cflags)
+            os.execv({"./configure", "CFLAGS=-O2", "--host=" .. prefix, "--prefix=" .. installdir, "--with-included-libtasn1", "--with-included-unistring", "--disable-openssl-compatibility", "--disable-hardware-acceleration", "--disable-shared", "--enable-static", "--without-p11-kit", "--disable-doc", "--disable-tests", "--disable-full-test-suite", "--disable-tools", "--disable-cxx", "--disable-maintainer-mode", "--disable-libdane"})
+            os.execv({"make", "-j" .. tostring(os.nproc())})
+             os.execv({"make", "install"})
+            xmake.os.cd("..")
+            xmake.os.rmdir(gnutls_dir)
+           duration = get_duration_str(start_time)
+            io.writefile(path.join(installdir, "gnutls_duration.txt"), duration)
+       end
+         -- 安装 wget2
+            print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build wget2⭐⭐⭐⭐⭐⭐")
+             start_time = os.time() + os.difftime()
+           os.execv({"git", "clone", "-j" .. tostring(os.nproc()), "https://github.com/rockdaboot/wget2.git"})
+          xmake.os.cd("wget2")
+            os.execv({"./bootstrap", "--skip-po"})
+             os.setenv("LDFLAGS", "-Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive")
+              os.setenv("CFLAGS", "-O2 -DNGHTTP2_STATICLIB")
+           os.setenv("GNUTLS_CFLAGS", cflags)
+             os.setenv("GNUTLS_LIBS", "-L" .. path.join(installdir, "lib") .. " -lgnutls -lbcrypt -lncrypt")
+             os.setenv("LIBPSL_CFLAGS", cflags)
+             os.setenv("LIBPSL_LIBS", "-L" .. path.join(installdir, "lib") .. " -lpsl")
+            os.setenv("PCRE2_CFLAGS", cflags)
+            os.setenv("PCRE2_LIBS", "-L" .. path.join(installdir, "lib") .. " -lpcre2-8")
+           os.execv({"./configure", "--build=x86_64-pc-linux-gnu", "--host=" .. prefix, "--with-libiconv-prefix=" .. installdir, "--with-ssl=gnutls", "--disable-shared", "--enable-static", "--with-lzma", "--with-zstd", "--without-bzip2", "--without-lzip", "--without-brotlidec", "--without-gpgme", "--enable-threads=windows"})
+           os.execv({"make", "-j" .. tostring(os.nproc())})
+            os.execv({"strip", path.join(installdir, "wget2", "src", "wget2.exe")})
+           os.execv({"cp", "-fv", path.join(installdir, "wget2", "src", "wget2.exe"), os.getenv("GITHUB_WORKSPACE")})
+           xmake.os.cd("..")
+            duration = get_duration_str(start_time)
+           io.writefile(path.join(installdir, "wget2_duration.txt"), duration)
+     
 
-function build_libidn2()
-  print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build libidn2⭐⭐⭐⭐⭐⭐")
-  local start_time = os.time() + os.difftime()
-    os.execv({"wget", "-O-", "https://ftp.gnu.org/gnu/libidn/libidn2-2.3.7.tar.gz", "|", "tar", "xz"})
-    local libidn2_dir = "libidn2-" .. string.match("libidn2-2.3.7.tar.gz", "libidn2%-(%d+%.%d+%.%d+)")
-   xmake.os.cd(libidn2_dir)
-    os.execv({"./configure", "--build=x86_64-pc-linux-gnu", "--host=" .. prefix, "--disable-shared", "--enable-static", "--with-included-unistring", "--disable-doc", "--disable-gcc-warnings", "--prefix=" .. installdir})
-    os.execv({"make", "-j" .. tostring(os.nproc())})
-    os.execv({"make", "install"})
-   xmake.os.cd("..")
-    xmake.os.rmdir(libidn2_dir)
-  local duration = get_duration_str(start_time)
-    io.writefile(path.join(installdir, "libidn2_duration.txt"), duration)
-end
-
-function build_libtasn1()
-  print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build libtasn1⭐⭐⭐⭐⭐⭐")
-  local start_time = os.time() + os.difftime()
-  os.execv({"wget", "-O-", "https://ftp.gnu.org/gnu/libtasn1/libtasn1-4.19.0.tar.gz", "|", "tar", "xz"})
-  local libtasn1_dir = "libtasn1-" .. string.match("libtasn1-4.19.0.tar.gz", "libtasn1%-(%d+%.%d+%.%d+)")
-  xmake.os.cd(libtasn1_dir)
-    os.execv({"./configure", "--host=" .. prefix, "--disable-shared", "--disable-doc", "--prefix=" .. installdir})
-    os.execv({"make", "-j" .. tostring(os.nproc())})
-    os.execv({"make", "install"})
-   xmake.os.cd("..")
-    xmake.os.rmdir(libtasn1_dir)
-  local duration = get_duration_str(start_time)
-    io.writefile(path.join(installdir, "libtasn1_duration.txt"), duration)
-end
-
-function build_PCRE2()
-  print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build PCRE2⭐⭐⭐⭐⭐⭐")
-    local start_time = os.time() + os.difftime()
-    os.execv({"git", "clone", "-j" .. tostring(os.nproc()), "https://github.com/PCRE2Project/pcre2"})
-    xmake.os.cd("pcre2")
-    os.execv({"./autogen.sh"})
-    os.execv({"./configure", "--host=" .. prefix, "--prefix=" .. installdir, "--disable-shared", "--enable-static"})
-    os.execv({"make", "-j" .. tostring(os.nproc())})
-    os.execv({"make", "install"})
-    xmake.os.cd("..")
-    xmake.os.rmdir("pcre2")
-  local duration = get_duration_str(start_time)
-    io.writefile(path.join(installdir, "pcre2_duration.txt"), duration)
-end
-
-function build_nghttp2()
-  print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build nghttp2⭐⭐⭐⭐⭐⭐")
-  local start_time = os.time() + os.difftime()
-  os.execv({"wget", "-O-", "https://github.com/nghttp2/nghttp2/releases/download/v1.64.0/nghttp2-1.64.0.tar.gz", "|", "tar", "xz"})
-    local nghttp2_dir = "nghttp2-" .. string.match("nghttp2-1.64.0.tar.gz", "nghttp2%-(%d+%.%d+%.%d+)")
-  xmake.os.cd(nghttp2_dir)
-    os.execv({"./configure", "--build=x86_64-pc-linux-gnu", "--host=" .. prefix, "--prefix=" .. installdir, "--disable-shared", "--enable-static", "--disable-python-bindings", "--disable-examples", "--disable-app", "--disable-failmalloc", "--disable-hpack-tools"})
-    os.execv({"make", "-j" .. tostring(os.nproc())})
-    os.execv({"make", "install"})
-    xmake.os.cd("..")
-    xmake.os.rmdir(nghttp2_dir)
-  local duration = get_duration_str(start_time)
-    io.writefile(path.join(installdir, "nghttp2_duration.txt"), duration)
-end
-
-function build_dlfcn_win32()
-  print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build dlfcn-win32⭐⭐⭐⭐⭐⭐")
-  local start_time = os.time() + os.difftime()
-    os.execv({"git", "clone", "-j" .. tostring(os.nproc()), "https://github.com/dlfcn-win32/dlfcn-win32.git"})
-    xmake.os.cd("dlfcn-win32")
-    os.execv({"./configure", "--prefix=" .. prefix, "--cc=" .. prefix .. "-gcc"})
-    os.execv({"make", "-j" .. tostring(os.nproc())})
-    os.execv({"cp", "-p", "libdl.a", path.join(installdir, "lib")})
-    os.execv({"cp", "-p", "src/dlfcn.h", path.join(installdir, "include")})
-   xmake.os.cd("..")
-    xmake.os.rmdir("dlfcn-win32")
-  local duration = get_duration_str(start_time)
-    io.writefile(path.join(installdir, "dlfcn-win32_duration.txt"), duration)
-end
-
-function build_libmicrohttpd()
-  print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build libmicrohttpd⭐⭐⭐⭐⭐⭐")
-  local start_time = os.time() + os.difftime()
-    os.execv({"wget", "-O-", "https://ftp.gnu.org/gnu/libmicrohttpd/libmicrohttpd-latest.tar.gz", "|", "tar", "xz"})
-    local libmicrohttpd_dir = "libmicrohttpd-" .. string.match("libmicrohttpd-latest.tar.gz", "libmicrohttpd%-(%d+%.%d+)")
-    xmake.os.cd(libmicrohttpd_dir)
-    os.execv({"./configure", "--build=x86_64-pc-linux-gnu", "--host=" .. prefix, "--prefix=" .. installdir, "--disable-shared", "--enable-static",
-            "--disable-examples", "--disable-doc", "--disable-tools"})
-    os.execv({"make", "-j" .. tostring(os.nproc())})
-    os.execv({"make", "install"})
-   xmake.os.cd("..")
-    xmake.os.rmdir(libmicrohttpd_dir)
-  local duration = get_duration_str(start_time)
-    io.writefile(path.join(installdir, "libmicrohttpd_duration.txt"), duration)
-end
-
-function build_libpsl()
-  print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build libpsl⭐⭐⭐⭐⭐⭐")
-  local start_time = os.time() + os.difftime()
-  os.execv({"git", "clone", "-j" .. tostring(os.nproc()), "--recursive", "https://github.com/rockdaboot/libpsl.git"})
-    xmake.os.cd("libpsl")
-    os.execv({"./autogen.sh"})
-    os.execv({"./configure", "--build=x86_64-pc-linux-gnu", "--host=" .. prefix, "--disable-shared", "--enable-static", "--enable-runtime=libidn2", "--enable-builtin", "--with-included-unistring", "--prefix=" .. installdir})
-    os.execv({"make", "-j" .. tostring(os.nproc())})
-    os.execv({"make", "install"})
-   xmake.os.cd("..")
-    xmake.os.rmdir("libpsl")
-  local duration = get_duration_str(start_time)
-    io.writefile(path.join(installdir, "libpsl_duration.txt"), duration)
-end
-
-function build_nettle()
-  print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build nettle⭐⭐⭐⭐⭐⭐")
-  local start_time = os.time() + os.difftime()
-  os.execv({"git", "clone", "-j" .. tostring(os.nproc()), "https://github.com/sailfishos-mirror/nettle.git"})
-    xmake.os.cd("nettle")
-    os.execv({"bash", ".bootstrap"})
-    os.execv({"./configure", "--build=x86_64-pc-linux-gnu", "--host=" .. prefix, "--enable-mini-gmp", "--disable-shared", "--enable-static", "--disable-documentation", "--prefix=" .. installdir})
-    os.execv({"make", "-j" .. tostring(os.nproc())})
-    os.execv({"make", "install"})
-    xmake.os.cd("..")
-    xmake.os.rmdir("nettle")
-  local duration = get_duration_str(start_time)
-    io.writefile(path.join(installdir, "nettle_duration.txt"), duration)
-end
-
-function build_gnutls()
-    print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build gnutls⭐⭐⭐⭐⭐⭐")
-  local start_time = os.time() + os.difftime()
-  os.execv({"wget", "-O-", "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/gnutls-3.8.8.tar.xz", "|", "tar", "x", "--xz"})
-    local gnutls_dir = "gnutls-" .. string.match("gnutls-3.8.8.tar.xz", "gnutls%-(%d+%.%d+%.%d+)")
-  xmake.os.cd(gnutls_dir)
-    os.setenv("GMP_LIBS", "-L" .. path.join(installdir, "lib") .. " -lgmp")
-    os.setenv("NETTLE_LIBS", "-L" .. path.join(installdir, "lib") .. " -lnettle -lgmp")
-    os.setenv("HOGWEED_LIBS", "-L" .. path.join(installdir, "lib") .. " -lhogweed -lnettle -lgmp")
-    os.setenv("LIBTASN1_LIBS", "-L" .. path.join(installdir, "lib") .. " -ltasn1")
-    os.setenv("LIBIDN2_LIBS", "-L" .. path.join(installdir, "lib") .. " -lidn2")
-    os.setenv("GMP_CFLAGS", cflags)
-    os.setenv("LIBTASN1_CFLAGS", cflags)
-    os.setenv("NETTLE_CFLAGS", cflags)
-    os.setenv("HOGWEED_CFLAGS", cflags)
-    os.setenv("LIBIDN2_CFLAGS", cflags)
-    os.execv({"./configure", "CFLAGS=-O2", "--host=" .. prefix, "--prefix=" .. installdir, "--with-included-libtasn1", "--with-included-unistring", "--disable-openssl-compatibility", "--disable-hardware-acceleration", "--disable-shared", "--enable-static", "--without-p11-kit", "--disable-doc", "--disable-tests", "--disable-full-test-suite", "--disable-tools", "--disable-cxx", "--disable-maintainer-mode", "--disable-libdane"})
-    os.execv({"make", "-j" .. tostring(os.nproc())})
-    os.execv({"make", "install"})
-  xmake.os.cd("..")
-    xmake.os.rmdir(gnutls_dir)
-  local duration = get_duration_str(start_time)
-    io.writefile(path.join(installdir, "gnutls_duration.txt"), duration)
-end
-
-function build_wget2()
-  print("⭐⭐⭐⭐⭐⭐" .. os.date("%Y/%m/%d %a %H:%M:%S") .. " - build wget2⭐⭐⭐⭐⭐⭐")
-  local start_time = os.time() + os.difftime()
-  os.execv({"git", "clone", "-j" .. tostring(os.nproc()), "https://github.com/rockdaboot/wget2.git"})
-    xmake.os.cd("wget2")
-    os.execv({"./bootstrap", "--skip-po"})
-    os.setenv("LDFLAGS", "-Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive")
-    os.setenv("CFLAGS", "-O2 -DNGHTTP2_STATICLIB")
-    os.setenv("GNUTLS_CFLAGS", cflags)
-    os.setenv("GNUTLS_LIBS", "-L" .. path.join(installdir, "lib") .. " -lgnutls -lbcrypt -lncrypt")
-    os.setenv("LIBPSL_CFLAGS", cflags)
-    os.setenv("LIBPSL_LIBS", "-L" .. path.join(installdir, "lib") .. " -lpsl")
-    os.setenv("PCRE2_CFLAGS", cflags)
-    os.setenv("PCRE2_LIBS", "-L" .. path.join(installdir, "lib") .. " -lpcre2-8")
-    os.execv({"./configure", "--build=x86_64-pc-linux-gnu", "--host=" .. prefix, "--with-libiconv-prefix=" .. installdir, "--with-ssl=gnutls", "--disable-shared", "--enable-static", "--with-lzma", "--with-zstd", "--without-bzip2", "--without-lzip", "--without-brotlidec", "--without-gpgme", "--enable-threads=windows"})
-    os.execv({"make", "-j" .. tostring(os.nproc())})
-    os.execv({"strip", path.join(installdir, "wget2", "src", "wget2.exe")})
-    os.execv({"cp", "-fv", path.join(installdir, "wget2", "src", "wget2.exe"), os.getenv("GITHUB_WORKSPACE")})
-   xmake.os.cd("..")
-  local duration = get_duration_str(start_time)
-    io.writefile(path.join(installdir, "wget2_duration.txt"), duration)
-end
+             -- 读取并输出编译时间
+        local duration1 = io.readfile(path.join(installdir, "zlib-ng_duration.txt"))
+        local duration2 = io.readfile(path.join(installdir, "libiconv_duration.txt"))
+        local duration3 = io.readfile(path.join(installdir, "libunistring_duration.txt"))
+        local duration4 = io.readfile(path.join(installdir, "libidn2_duration.txt"))
+        local duration5 = io.readfile(path.join(installdir, "libtasn1_duration.txt"))
+        local duration6 = io.readfile(path.join(installdir, "pcre2_duration.txt"))
+        local duration7 = io.readfile(path.join(installdir, "nghttp2_duration.txt"))
+        local duration8 = io.readfile(path.join(installdir, "gmp_duration.txt"))
+         local duration9 = io.readfile(path.join(installdir, "libpsl_duration.txt"))
+        local duration10 = io.readfile(path.join(installdir, "nettle_duration.txt"))
+        local duration11 = io.readfile(path.join(installdir, "gnutls_duration.txt"))
+         local duration12 = io.readfile(path.join(installdir, "wget2_duration.txt"))
 
 
-build_zstd()
-build_zlib_ng()
-build_gmp()
+        print("编译 zlib-ng 用时：" .. duration1 .. "s")
+        print("编译 libiconv 用时：" .. duration2 .. "s")
+        print("编译 libunistring 用时：" .. duration3 .. "s")
+        print("编译 libidn2 用时：" .. duration4 .. "s")
+       print("编译 libtasn1 用时：" .. duration5 .. "s")
+        print("编译 PCRE2 用时：" .. duration6 .. "s")
+        print("编译 nghttp2 用时：" .. duration7 .. "s")
+         print("编译 gmp 用时：" .. duration8 .. "s")
+        print("编译 libpsl 用时：" .. duration9 .. "s")
+        print("编译 nettle 用时：" .. duration10 .. "s")
+         print("编译 gnutls 用时：" .. duration11 .. "s")
+          print("编译 wget2 用时：" .. duration12 .. "s")
 
-local p = {}
-table.insert(p, function() build_libiconv() end)
-table.insert(p, function() build_libidn2() end)
-table.insert(p, function() build_libtasn1() end)
-xmake.task.runv(p)
-
-
-local p = {}
-table.insert(p, function() build_PCRE2() end)
-table.insert(p, function() build_nghttp2() end)
-table.insert(p, function() build_libmicrohttpd() end)
-table.insert(p, function() build_libunistring() end)
-xmake.task.runv(p)
-
-
-
-build_libpsl()
-build_nettle()
-build_gnutls()
-build_wget2()
-
-
--- 读取并输出编译时间
---local duration1 = io.readfile(path.join(installdir, "xz_duration.txt"))
-local duration2 = io.readfile(path.join(installdir, "zstd_duration.txt"))
-local duration3 = io.readfile(path.join(installdir, "zlib-ng_duration.txt"))
-local duration4 = io.readfile(path.join(installdir, "gmp_duration.txt"))
---local duration5 = io.readfile(path.join(installdir, "gnulibmirror_duration.txt"))
-local duration6 = io.readfile(path.join(installdir, "libiconv_duration.txt"))
-local duration7 = io.readfile(path.join(installdir, "libunistring_duration.txt"))
-local duration8 = io.readfile(path.join(installdir, "libidn2_duration.txt"))
-local duration9 = io.readfile(path.join(installdir, "libtasn1_duration.txt"))
-local duration10 = io.readfile(path.join(installdir, "pcre2_duration.txt"))
-local duration11 = io.readfile(path.join(installdir, "nghttp2_duration.txt"))
---local duration12 = io.readfile(path.join(installdir, "dlfcn-win32_duration.txt"))
-local duration13 = io.readfile(path.join(installdir, "libmicrohttpd_duration.txt"))
-local duration14 = io.readfile(path.join(installdir, "libpsl_duration.txt"))
-local duration15 = io.readfile(path.join(installdir, "nettle_duration.txt"))
-local duration16 = io.readfile(path.join(installdir, "gnutls_duration.txt"))
-local duration17 = io.readfile(path.join(installdir, "wget2_duration.txt"))
-
--- print("编译 xz 用时：" .. duration1 .. "s")
-print("编译 zstd 用时：" .. duration2 .. "s")
-print("编译 zlib-ng 用时：" .. duration3 .. "s")
-print("编译 gmp 用时：" .. duration4 .. "s")
--- print("编译 gnulibmirror 用时：" .. duration5 .. "s")
-print("编译 libiconv 用时：" .. duration6 .. "s")
-print("编译 libunistring 用时：" .. duration7 .. "s")
-print("编译 libidn2 用时：" .. duration8 .. "s")
-print("编译 libtasn1 用时：" .. duration9 .. "s")
-print("编译 PCRE2 用时：" .. duration10 .. "s")
-print("编译 nghttp2 用时：" .. duration11 .. "s")
--- print("编译 dlfcn-win32 用时：" .. duration12 .. "s")
-print("编译 libmicrohttpd 用时：" .. duration13 .. "s")
-print("编译 libpsl 用时：" .. duration14 .. "s")
-print("编译 nettle 用时：" .. duration15 .. "s")
-print("编译 gnutls 用时：" .. duration16 .. "s")
-print("编译 wget2 用时：" .. duration17 .. "s")
+          target:add("linkdirs", path.join(installdir, "lib"))
+          target:add("includedirs", path.join(installdir, "include"))
+    end)
+        
+    on_config(function (target)
+        local variables = target:get("configvar") or {}
+        for _, opt in ipairs(target:orderopts()) do
+            for name, value in pairs(opt:get("configvar")) do
+                if variables[name] == nil then
+                    variables[name] = table.unwrap(value)
+                    variables["__extraconf_" .. name] = opt:extraconf("configvar." .. name, value)
+                end
+            end
+        end
+        local set_configvar = function(k, v)
+            if v == nil then
+                return
+            end
+            target:set("configvar", k, v)
+            variables[k] = v
+        end
+        set_configvar("HOST", vformat("$(host)"))
+        set_configvar("BUILD", vformat("$(arch)-$(os)"))
+        set_configvar("TARGET", vformat("$(arch)-$(os)"))
+    end)
+    
+    add_files("src/*.c", "src/*.cc")
+    add_includedirs("src")
+     add_ldflags(ldflags)
+    if is_plat("windows", "mingw") then
+          add_syslinks("ws2_32", "shell32", "iphlpapi")
+         add_ldflags("-static")
+    end
