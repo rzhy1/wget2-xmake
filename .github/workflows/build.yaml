@@ -36,6 +36,8 @@ jobs:
           CROSS_HOST: "x86_64-w64-mingw32"
         run: |
           export XMAKE_ROOT=y
+          whereis x86_64-w64-mingw32-gcc
+          which x86_64-w64-mingw32-gcc
           xmake f -p mingw --toolchain=/usr/bin/${CROSS_HOST}
           xmake -v
       - name: Archive wget2.exe
