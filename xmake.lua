@@ -1,5 +1,6 @@
 includes("@builtin/check")
 add_rules("mode.debug", "mode.release")
+export XMAKE_ROOT=y
 
 -- 这里我们不需要aria2的依赖，但保留一些常用的
 add_requires(
